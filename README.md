@@ -1,124 +1,184 @@
-# bothostgtagame
+# bothostgtagame v2.0 — Castle Host Automation
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Next.js](https://img.shields.io/badge/Next.js-14-black)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)
+![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933)
+![Playwright](https://img.shields.io/badge/Playwright-core-blue)
 
-**Open Source веб-инструмент для автоматического управления игровыми серверами
-на хостинге [HostGta.ru](https://hostgta.ru).**
+**Приватный инструмент для автоматического управления МОИМ ЛИЧНЫМ аккаунтом
+на хостинге [Castle Host](https://cp.castle-host.com).**
 
-Пользователь генерирует уникальный **Friend Key**, добавляет бота в друзья на
-HostGta.ru — и после верификации получает панель мониторинга и автозапуска своего
-сервера 24/7.
+Старый хостинг **HostGta больше не используется** — вся логика парсинга
+переработана под панель Castle Host (v1.0 привилегированного режима).
 
-## Архитектура: продакшен без эмуляции браузера (`user = agent`)
+## Что делает бот
 
-Весь обмен с HostGta.ru ведёт **один сервисный аккаунт-агент** через чистый HTTP:
+| Задача | Расписание (МСК) | Логика |
+|---|---|---|
+| 🟢 Включение сервера | ежедневно в **00:01** (`START_CRON`) | сервер гаснет в 00:00 МСК → бот проверяет статус и эмулирует клик **«Включить сервер»** |
+| 🔁 Почасовой чек | каждый час (`CHECK_CRON`) | проверка статуса + страховочное включение в ночном окне 00:01–00:59 |
+| 💳 Продление аренды | при остатке **< 24 часов** (`RENEW_THRESHOLD_HOURS`) | клик **«Продлить на 7 дней»** → выбор периода → **оплата с баланса аккаунта** → подтверждение |
+| 🔁 Retry | через **5 минут** (`RETRY_AFTER_MIN`), до 3 попыток | если включение/оплата не прошли |
+| 📬 Уведомления | Telegram Bot API и/или простой webhook | все включения, оплаты и ошибки; дублируются в `logs/bot.log` |
+| 🧍 Human-like | всегда | случайные задержки 0.8–3.5 с между действиями, посимвольный ввод, «живой» курсор |
+
+## Архитектура
 
 ```
-Браузер пользователя (Dark Mode UI, localStorage)
-        │  fetch + Bearer HMAC-токен
-        ▼
-Next.js API Routes (/api/verify-friend, /api/check-server-status, /api/cron/monitor)
-        │  AgentSession (src/lib/agent.ts): cookie-jar, CSRF, JSON-API
-        ▼
-HostGta.ru  ◄── user = agent (реальный аккаунт бота, НЕ эмуляция Puppeteer)
+node-cron (TZ=Europe/Moscow)
+   │  bot/index.js — планировщик, singleton-защита
+   ▼
+bot/tasks.js ─── withRetry (5 мин × 3) ──► bot/notify.js (Telegram / webhook)
+   │
+   ▼
+bot/auth.js ─── persistent-сессия (session/) ──► bot/castle.js (старт/продление/парсинг)
+   │                                              ▲
+   └── Playwright (chromium, headless)            └── bot/selectors.js — карта панели
 ```
 
-- **Никакого Puppeteer/headless-Chrome** — только `fetch` + разбор JSON/HTML
-  (`cheerio` как фолбэк-парсер). Сборка лёгкая, деплой возможен даже на Vercel.
-- Секреты агента живут **только в env сервера** и никогда не попадают в браузер.
-- Фоновый cron-мониторинг работает на сервере и **не зависит от localStorage**:
-  при сбросе кеша браузера пользователь теряет доступ к дашборду (переверифицируется
-  по ключу), но его сервер продолжает мониториться и автозапускаться.
+- **Playwright вместо Puppeteer** — стабильнее при редизайнах панелей и лучше
+  переносит ожидание/авто-wait. Используется `playwright-core` + системный Chrome.
+- **Устойчивые селекторы**: каждый элемент описан списком вариантов
+  (`data-*`, `aria-*`, текст кнопки → и только потом CSS-классы). Функция
+  `firstMatching()` перебирает их и берёт первый реально найденный — панель
+  может менять классы, бот продолжит работать.
+- **Сессия живёт в persistent-профиле браузера** (`SESSION_DIR`, исключён из Git).
+  Cookies — это не localStorage страницы и никогда не содержат пароль.
 
-## Основной функционал (v1.0)
+## ⚠️ SECURITY WARNING: Never commit your credentials!
 
-1. **Генерация и верификация Friend Key**
-   «Сгенерировать ключ» → криптографически стойкий hex-код (`f9eea118a6ef…`) →
-   пользователь добавляет агента в друзья с этим ключом → «Проверить подключение».
-   Ключ найден — статус «Успех» и доступ к панели; не найден — ошибка
-   «Бот не нашел заявку. Проверьте правильность ключа и попробуйте снова» + «Повторить проверку».
-2. **Мониторинг сервера 24/7 (MVP)**
-   Каждые 60 минут: GET статуса сервера → если Offline → POST «включить»
-   (production-запрос эндпоинта управления от имени агента) → повторная проверка.
-   В дашборде: статус, uptime, время последнего чека, журнал автозапусков.
+> **НИКОГДА не коммитьте реальные пароли в Git!**
+>
+> - Все учётные данные берутся **ТОЛЬКО** из файла `.env.local`.
+> - В коде нет ни одного хардкод-пароля; в браузер/UI секреты не передаются.
+> - `.gitignore` блокирует любые файлы `.env*` (кроме шаблона `.env.example`).
+> - Папки `session/` (cookies!), `logs/` и `screenshots/` также вне Git.
+> - Пароль не пишется в логи и уведомления — там только статусы действий.
+> - Перед push проверьте: `git status --ignored | grep .env` — реального `.env.local`
+>   быть в списке отслеживаемых файлов не должно.
 
-## Быстрый старт: как запустить свой инстанс
+## Быстрый старт
+
+### 1. Настройка секретов
+
+**Создайте `.env.local` по шаблону `.env.example`. Никогда не коммитьте реальные
+пароли в Git!**
 
 ```bash
-# 1. Клонируем и ставим зависимости
-git clone https://github.com/<you>/bothostgtagame && cd bothostgtagame
+cp .env.example .env.local
+nano .env.local   # заполните CASTLE_LOGIN, CASTLE_PASSWORD, CASTLE_SERVER_ID
+```
+
+Обязательные переменные:
+
+| Переменная | Описание |
+|---|---|
+| `CASTLE_LOGIN` | e-mail/логин вашего аккаунта Castle Host |
+| `CASTLE_PASSWORD` | пароль (только в `.env.local`!) |
+| `CASTLE_SERVER_ID` | ID сервера (виден в URL: `cp.castle-host.com/servers/<ID>`) |
+
+Необязательные: `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` (уведомления),
+`WEBHOOK_URL`, `CAPTCHA_23_CAPTCHA_KEY` (решатель капчи), `CHROME_PATH`,
+значения расписания и антибан-задержек — см. комментарии в `.env.example`.
+
+### 2. Установка
+
+```bash
 npm install
 
-# 2. Конфигурация агента
-cp .env.example .env.local
-#   заполните AGENT_LOGIN / AGENT_PASSWORD (или AGENT_SESSION_COOKIE),
-#   TOKEN_SECRET и CRON_SECRET
-
-# 3. Запуск
-npm run dev            # http://localhost:3000
+# Браузер: playwright-core использует системный Chrome/Chromium
+# Debian/Ubuntu:
+sudo apt install -y chromium || sudo apt install -y google-chrome-stable
+# macOS:
+brew install --cask google-chrome
+# Windows: укажите путь через CHROME_PATH в .env.local
 ```
 
-Требования: Node.js ≥ 18.17.
+### 3. Первичный вход (прохождение капчи/2FA один раз)
 
-### Получение AGENT_SESSION_COOKIE (рекомендуется)
+```bash
+HEADLESS=false npm run login:once
+```
 
-1. Залогиньтесь агентом на hostgta.ru в обычном браузере (Cloudflare-челлендж
-   пройдёт штатно — это делает человек, а не бот).
-2. DevTools → Application → Cookies → скопируйте `PHPSESSID=…` целиком.
-3. Положите строку в `AGENT_SESSION_COOKIE` — пароль в env больше не нужен.
+Откроется окно браузера: бот залогинится сам; если панель покажет капчу —
+пройдите её мышкой. Сессия сохранится в `./session/` и дальнейшие запуски
+будут **headless, без ввода пароля** (по cookies).
 
-## Деплой
+### 4. Запуск планировщика
 
-| Платформа | Способ |
-|---|---|
-| **Vercel** | `vercel --prod`; cron каждые 60 мин уже в `vercel.json` |
-| **Tatnet / Onreza / Layer0 / VPS** | `docker build -t bothostgtagame .` + crontab (см. ниже) |
-| **Любой хостинг с Node** | `npm run build && npm start` (output standalone) |
+```bash
+npm start                 # node-cron: включение в 00:01 МСК + почасовой чек
+npm run check:once        # разовая отладочная проверка цикла
+```
+
+### 5. Автозапуск на VPS (systemd)
+
+```ini
+# /etc/systemd/system/bothostgtagame.service
+[Unit]
+Description=Castle Host server autostart bot
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/bothostgtagame
+ExecStart=/usr/bin/node bot/index.js
+Restart=always
+RestartSec=60
+EnvironmentFile=/opt/bothostgtagame/.env.local
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable --now bothostgtagame
+journalctl -u bothostgtagame -f
+```
+
+Альтернатива без демона — системный crontab (секретов в crontab не храните,
+.env.local подхватится сам):
 
 ```cron
-# фоновый мониторинг каждый час (Docker/VPS)
-0 * * * * curl -s -H "Authorization: Bearer $CRON_SECRET" https://your-domain.ru/api/cron/monitor
+1 0 * * *  cd /opt/bothostgtagame && node bot/check-once.js >> logs/cron.log 2>&1
 ```
-
-Подробные инструкции и стратегия обхода Cloudflare без эмуляции — в
-[docs/deployment.md](docs/deployment.md).
 
 ## Структура проекта
 
 ```
-src/
-├── app/                    # Next.js App Router
-│   ├── page.tsx            # главная: генерация Friend Key + верификация
-│   ├── dashboard/page.tsx  # защищённая панель мониторинга
-│   └── api/
-│       ├── verify-friend/route.ts         # проверка заявки у агента
-│       ├── check-server-status/route.ts   # мониторинг по требованию
-│       └── cron/monitor/route.ts          # фоновый цикл 24/7
-├── components/             # UI (Dark Mode, адаптивный)
-├── lib/
-│   ├── agent.ts            # ★ AgentSession: production HTTP-клиент HostGta
-│   ├── hostgta.ts          # маршруты/селекторы + парсинг (cheerio-фолбэк)
-│   ├── monitor.ts          # бизнес-логика проверки/автозапуска
-│   ├── crypto.ts           # генерация ключей, HMAC-токены доступа
-│   └── env.ts, rate-limit.ts, types.ts …
-└── store/                  # Zustand + persist в localStorage
-docs/                       # deployment-гайд
-.github/workflows/          # CI (typecheck+build), Docker publish
+bot/
+├── index.js       # точка входа: node-cron планировщик (00:01 МСК + hourly)
+├── config.js      # чтение ВСЕХ настроек из .env.local (dotenv), валидация
+├── timezone.js    # точное время Europe/Moscow через Intl (не зависит от TZ хоста)
+├── browser.js     # Playwright persistent-контекст + human-delay/type/click + скриншоты
+├── auth.js        # вход: сессия → форма → капча (2captcha или вручную)
+├── castle.js      # статус сервера, «Включить», дата аренды, «Продлить+оплата с баланса»
+├── selectors.js   # ★ карта панели: устойчивые селекторы (data-*, aria-*, текст)
+├── tasks.js       # бизнес-циклы dailyStart/hourlyCheck + retry каждые 5 минут
+├── logger.js      # консоль + logs/bot.log (без секретов)
+├── notify.js      # Telegram Bot API / webhook
+├── login-once.js  # интерактивный одноразовый вход (капча мышкой)
+└── check-once.js  # разовый цикл проверки для отладки/crontab
+.env.example       # шаблон настроек (заглушки, БЕЗ реальных паролей)
+.gitignore         # блокирует .env*, session/, logs/, screenshots/
 ```
 
-## Безопасность
+## Если панель изменит вёрстку
 
-- Все пользовательские входы санитизируются (строгий whitelist-паттерн ключа).
-- Rate limiting каждого эндпоинта; cron защищён `CRON_SECRET`.
-- Токен дашборда — HMAC-SHA256 с TTL 7 дней, подписывается `TOKEN_SECRET` на сервере.
-- Security-заголовки (`X-Frame-Options: DENY`, `nosniff`), non-root Docker-user.
+1. Запустите `npm run check:once` с `LOG_LEVEL=debug` — посмотрите `logs/bot.log`
+   и `screenshots/*.png` (бот сохраняет кадр при каждом unfound-сценарии).
+2. Откройте соответствующий блок в `bot/selectors.js` и добавьте новый вариант
+   селектора **в начало** списка (старые варианты оставьте как фолбэк).
+3. Бизнес-логику (`castle.js`, `tasks.js`) править не нужно — она работает со
+   списком вариантов через `firstMatching()`.
 
-## Лицензия
+## Капча
 
-[MIT](LICENSE) — используйте, форкайте и распространяйте свободно.
+- При появлении reCAPTCHA/hCaptcha на входе бот пытается решить её через
+  сервис 2captcha (нужен `CAPTCHA_23_CAPTCHA_KEY`).
+- Без решателя: сохраняется скриншот + уведомление; выполните шаг 3 ещё раз
+  в видимом окне (`HEADLESS=false npm run login:once`) — сессия снова сохранится.
 
-> ⚠️ Проект не аффилирован с HostGta.ru. Автоматизируйте только те действия,
-> которые разрешены правилами хостинга; при изменении ToS ответственность
-> за инстанс несёт администратор форка.
+## Лицензия и дисклеймер
+
+[MIT](LICENSE). Проект **не аффилирован с Castle Host**. Инструмент предназначен
+для автоматизации **вашего собственного** аккаунта; убедитесь, что автоматизация
+панели не нарушает правила хостинга. Ответственность за инстанс несёт администратор.
