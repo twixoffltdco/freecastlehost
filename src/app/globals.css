@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * globals.css — палитра минималистичного Dark Mode (HSL-переменные в стиле shadcn/ui).
+ * Light-тема оставлена заготовкой на будущее.
+ */
+@layer base {
+  :root {
+    /* По умолчанию приложение тёмное (см. <html class="dark">) */
+    --background: 224 24% 6%;
+    --foreground: 210 20% 92%;
+    --card: 224 22% 9%;
+    --card-foreground: 210 20% 92%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 224 24% 6%;
+    --secondary: 222 18% 16%;
+    --secondary-foreground: 210 20% 92%;
+    --muted: 222 18% 14%;
+    --muted-foreground: 215 16% 62%;
+    --accent: 222 18% 18%;
+    --accent-foreground: 210 20% 92%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 20% 98%;
+    --border: 222 18% 20%;
+    --input: 222 18% 22%;
+    --ring: 217 91% 60%;
+    --radius: 0.6rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}

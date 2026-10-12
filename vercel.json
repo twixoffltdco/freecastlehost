@@ -1,0 +1,20 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron/monitor",
+      "schedule": "0 * * * *"
+    }
+  ],
+  "functions": {
+    "src/app/api/check-server-status/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/verify-friend/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/cron/monitor/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}
