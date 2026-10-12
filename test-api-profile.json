@@ -1,0 +1,35 @@
+{
+  "baseUrl": "http://localhost:8745",
+  "discoveredAt": "2026-10-12T06:42:46.857Z",
+  "login": {
+    "method": "POST",
+    "url": "http://localhost:8745/auth/login",
+    "userField": "email",
+    "passField": "password",
+    "csrfField": "_token",
+    "csrfValue": "abc123",
+    "extraFields": []
+  },
+  "serversListUrl": "http://localhost:8745/servers",
+  "serverDetailUrl": null,
+  "status": {
+    "kind": "page-text"
+  },
+  "start": {
+    "method": "POST",
+    "url": "http://localhost:8745/servers/12345/start",
+    "fields": [],
+    "csrfField": null,
+    "probed": true
+  },
+  "renew": {
+    "method": "POST",
+    "url": "http://localhost:8745/servers/12345/renew",
+    "fields": [],
+    "csrfField": null,
+    "probed": true
+  },
+  "pay": null,
+  "expiresSelector": null,
+  "notes": "Если панель сменит вёрстку — запустите `npm run discover` заново или поправьте этот JSON вручную."
+}
